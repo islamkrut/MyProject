@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Pac-Man</title>
+  <style>
+    body { background:#000; margin:0; overflow:hidden; }
+    canvas { display:block; margin:0 auto; background:#111; }
+    #menu { position:absolute; top:20px; left:20px; background:#222; color:#fff; padding:10px; border-radius:8px; font-family:sans-serif; z-index:10; }
+  </style>
+</head>
+<body>
+  <div id="menu">
+    <button id="startBtn">Начать / Перезапустить</button>
+    <button id="pauseBtn">Пауза</button>
+    <span id="level">Уровень: 1</span>
+    <span id="score">Счёт: 0</span>
+  </div>
+  <canvas id="game"></canvas>
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+
+    let currentLevel = 1;
+    const maxLevels = 100;
+    let score = 0;
+    let paused = false;
+    let showTitle = true;
+
+    function generateMap(level) {
+      let rows = 15 + Math.min(level, 20);
+      let cols = 21 + Math.min(level, 30);
+      let map = Array.from({length: rows}, (_,y)=>Array.from({length: cols}, (_,x)=>{
+        if (y===0||y===rows-1||x===0||x===cols-1) return 1;
+        if (Math.random() < 0.15) return 1;
+        return 0;
+      }));
+      map[rows-2][cols-2] = 9; // выход
+      return {map, rows, cols};
+    }
+
+    let {map, rows, cols} = generateMap(currentLevel);
+    let tileSize = Math.min(width / cols, height / rows);
+
+    let pacman = { x: tileSize*1.5, y: tileSize*1.5, dx: 0, dy: 0, speed: 2, mouth:0, mouthDir:1 };
+
+    let ghosts = [
+      { x: tileSize*(cols-2)+tileSize/2, y: tileSize*1.5, color:"red", path:[], mode:"chase", scatterTarget:[0,0] },
+      { x: tileSize*(cols-2)+tileSize/2, y: tileSize*(rows-2)+tileSize/2, color:"cyan", path:[], mode:"scatter", scatterTarget:[cols-1,0] }
+    ];
+
+    let keys = {};
+    document.addEventListener("keydown", e=>{ if(e.key!=" ") showTitle=false; keys[e.key]=true; });
+    document.addEventListener("keyup", e=>{ keys[e.key]=false; });
+
+    function updatePacman() {
+      if (keys["ArrowUp"]||keys["w"]){ pacman.dx=0; pacman.dy=-pacman.speed; }
+      if (keys["ArrowDown"]||keys["s"]){ pacman.dx=0; pacman.dy=pacman.speed; }
+      if (keys["ArrowLeft"]||keys["a"]){ pacman.dx=-pacman.speed; pacman.dy=0; }
+      if (keys["ArrowRight"]||keys["d"]){ pacman.dx=pacman.speed; pacman.dy=0; }
+
+      let newX=pacman.x+pacman.dx;
+      let newY=pacman.y+pacman.dy;
+      let col=Math.floor(newX/tileSize);
+      let row=Math.floor(newY/tileSize);
+
+      if (map[row] && map[row][col]!==1){
+        pacman.x=newX;
+        pacman.y=newY;
+        if (map[row][col]===0){
+          map[row][col]=2;
+          score++;
+          document.getElementById("score").textContent="Счёт: "+score;
+        }
+        if(map[row][col]===9){
+          alert("Поздравляем! Вы нашли выход! Счёт: "+score);
+          nextLevel();
+        }
+      }
+
+      pacman.mouth+=0.1*pacman.mouthDir;
+      if (pacman.mouth>0.25||pacman.mouth<0) pacman.mouthDir*=-1;
+    }
+
+    function bfs(start,target){
+      let queue=[[start]];
+      let visited=new Set([start.toString()]);
+      while(queue.length){
+        let path=queue.shift();
+        let [x,y]=path[path.length-1];
+        if(x===target[0]&&y===target[1]) return path;
+        [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy])=>{
+          let nx=x+dx,ny=y+dy;
+          if(map[ny]&&map[ny][nx]!==1&&!visited.has([nx,ny].toString())){
+            visited.add([nx,ny].toString());
+            queue.push([...path,[nx,ny]]);
+          }
+        });
+      }
+      return [];
+    }
+
+    let modeTimer=0;
+    function updateGhosts(){
+      modeTimer++;
+      if(modeTimer%600===0){
+        ghosts.forEach(g=>g.mode=g.mode==="chase"?"scatter":"chase");
+      }
+      ghosts.forEach(g=>{
+        let pacCol=Math.floor(pacman.x/tileSize);
+        let pacRow=Math.floor(pacman.y/tileSize);
+        let gCol=Math.floor(g.x/tileSize);
+        let gRow=Math.floor(g.y/tileSize);
+        let target=g.mode==="chase"?[pacCol,pacRow]:g.scatterTarget;
+        if(g.path.length===0||Math.random()<0.02) g.path=bfs([gCol,gRow],target);
+        if(g.path.length>1){
+          let [nx,ny]=g.path[1];
+          g.x+=Math.sign(nx*tileSize+tileSize/2-g.x);
+          g.y+=Math.sign(ny*tileSize+tileSize/2-g.y);
+          if(Math.abs(g.x-(nx*tileSize+tileSize/2))<1&&Math.abs(g.y-(ny*tileSize+tileSize/2))<1) g.path.shift();
+        }
+        if(Math.hypot(g.x-pacman.x,g.y-pacman.y)<tileSize/1.5){
+          alert("Game Over! Счёт: "+score);
+          resetGame();
+        }
+      });
+    }
+
+    function draw(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      if(showTitle){
+        ctx.fillStyle="yellow";
+        ctx.font=`${Math.floor(height/5)}px Arial`;
+        ctx.textAlign="center";
+        ctx.fillText("IK-Game", width/2, height/2 - 100);
+
+        ctx.fillStyle="white";
+        ctx.font=`${Math.floor(height/20)}px Arial`;
+        ctx.fillText("Начать играть", width/2, height/2 - 40);
+
+        ctx.fillStyle="lightblue";
+        ctx.font=`${Math.floor(height/30)}px Arial`;
+        const rules = [
+          "Правила:",
+          "Чтобы начать игру, нужно нажать любую кнопку, кроме 'Пробел'.",
+          "Управление через стрелки.",
+          "Зеленая клетка – это портал, который приносит тебе второй уровень.",
+          "Всего 100 уровней.",
+          "Удачи в прохождении игры!"
+        ];
+        rules.forEach((line,i)=>{
+          ctx.fillText(line, width/2, height/2 + 10 + i*30);
+        });
+        return;
+      }
+
+      for(let y=0;y<rows;y++){
+        for(let x=0;x<cols;x++){
+          if(map[y][x]===1){ ctx.fillStyle="blue"; ctx.fillRect(x*tileSize,y*tileSize,tileSize,tileSize); }
+          else if(map[y][x]===0){ ctx.fillStyle="white"; ctx.beginPath(); ctx.arc(x*tileSize+tileSize/2,y*tileSize+tileSize/2,3,0,Math.PI*2); ctx.fill(); }
+          else if(map[y][x]===9){ ctx.fillStyle="green"; ctx.fillRect(x*tileSize,y*tileSize,tileSize,tileSize); }
+        }
+      }
+      ctx.fillStyle="yellow";
+      ctx.beginPath();
+      let angle=pacman.mouth;
+      ctx.moveTo(pacman.x,pacman.y);
+      ctx.arc(pacman.x,pacman.y,tileSize/2,angle,Math.PI*2-angle);
+      ctx.closePath(); ctx.fill();
+      ghosts.forEach(g=>{ ctx.fillStyle=g.color; ctx.beginPath(); ctx.arc(g.x,g.y,tileSize/2,0,Math.PI*2); ctx.fill(); });
+    }
+
+    function nextLevel(){
+      if(currentLevel<maxLevels){
+        currentLevel++;
+        document.getElementById("level").textContent="Уровень: "+currentLevel;
+        let newMap=generateMap(currentLevel);
+        map=newMap.map; rows=newMap.rows; cols=newMap.cols;
+        tileSize=Math.min(width/cols,height/rows);
+        pacman.x=tileSize*1.5; pacman.y=tileSize*1.5;
+        ghosts.forEach((g,i)=>{ g.x=tileSize*(cols-2)+tileSize/2; g.y=tileSize*(rows-2)+tileSize/2; g.path=[]; });
+      } else { alert("Поздравляем! Вы прошли все уровни! Счёт: "+score); resetGame(); }
+    }
+
+    function resetGame(){
+      currentLevel=1; score=0; showTitle=true;
+      document.getElementById("level").textContent="Уровень: 100";
+      document.getElementById("score").textContent="Счёт: 0";
+      let newMap=generateMap(currentLevel);
+      map=newMap.map; rows=newMap.rows; cols=newMap.cols;
+      tileSize=Math.min(width/cols,height/rows);
+      pacman.x=tileSize*1.5; pacman.y=tileSize*1.5;
+      ghosts.forEach((g,i)=>{ g.x=tileSize*(cols-2)+tileSize/2; g.y=tileSize*(rows-2)+tileSize/2; g.path=[]; });
+      modeTimer=0;
+    }
+
+    document.getElementById("startBtn").onclick=resetGame;
+    document.getElementById("pauseBtn").onclick=()=>{ paused=!paused; };
+
+    function gameLoop(){
+      if(!paused){ updatePacman(); updateGhosts(); draw(); }
+      requestAnimationFrame(gameLoop);
+    }
+    gameLoop();
+  </script>
+</body>
+</html>
